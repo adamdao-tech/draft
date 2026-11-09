@@ -4,7 +4,9 @@
 //! Startup loads try, in order: the config file itself, its `.bak` backup (the previous
 //! version, kept by every save), and the shipped copy in `config/defaults/`.
 
+use crate::platform::PathExt as _;
 use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
@@ -25,20 +27,24 @@ pub const SETTINGS_FILE_NAME: &str = "settings.json";
 /// Without it (running from source, or a copy unpacked anywhere), everything stays next to
 /// the working directory or the executable, as before.
 pub const INSTALLED_MARKER: &str = "recvrve-installed";
+#[cfg(not(target_arch = "wasm32"))]
 const APP_DIR_NAME: &str = "Recvrve";
 
+#[cfg(not(target_arch = "wasm32"))]
 fn exe_dir() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(Path::to_path_buf))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// The per-user folders of an installed copy.
 struct Installed {
     config: PathBuf,
     documents: PathBuf,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn installed() -> Option<&'static Installed> {
     static INSTALLED: OnceLock<Option<Installed>> = OnceLock::new();
     INSTALLED
@@ -62,31 +68,39 @@ fn installed() -> Option<&'static Installed> {
         .as_ref()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Copies the shipped config folder `from` into the user's `to`: files the user doesn't
 /// have yet, and always the `defaults` folder (so updates bring new defaults). The user's
 /// own files are never overwritten.
 fn seed(from: &Path, to: &Path) -> std::io::Result<()> {
     fn walk(from: &Path, to: &Path, refresh: bool) -> std::io::Result<()> {
-        std::fs::create_dir_all(to)?;
-        for entry in std::fs::read_dir(from)? {
+        crate::platform::fs::create_dir_all(to)?;
+        for entry in crate::platform::fs::read_dir(from)? {
             let entry = entry?;
             let name = entry.file_name();
             let (src, dst) = (entry.path(), to.join(&name));
             if entry.file_type()?.is_dir() {
                 walk(&src, &dst, refresh || name == DEFAULTS_DIR_NAME)?;
-            } else if refresh || !dst.exists() {
-                std::fs::copy(&src, &dst)?;
+            } else if refresh || !dst.vfs_exists() {
+                crate::platform::fs::copy(&src, &dst)?;
             }
         }
         Ok(())
     }
-    if from.is_dir() {
+    if from.vfs_is_dir() {
         walk(from, to, false)?;
     }
     Ok(())
 }
 
 /// Folders a config file may be in, most preferred first.
+#[cfg(target_arch = "wasm32")]
+pub fn candidate_dirs() -> Vec<PathBuf> {
+    vec![PathBuf::from("/").join(CONFIG_DIR_NAME)]
+}
+
+/// Folders a config file may be in, most preferred first.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn candidate_dirs() -> Vec<PathBuf> {
     if let Some(i) = installed() {
         return vec![i.config.clone()];
@@ -108,7 +122,7 @@ pub fn candidate_dirs() -> Vec<PathBuf> {
 pub fn config_dir() -> PathBuf {
     let dirs = candidate_dirs();
     dirs.iter()
-        .find(|d| d.is_dir())
+        .find(|d| d.vfs_is_dir())
         .cloned()
         .unwrap_or_else(|| dirs[0].clone())
 }
@@ -116,6 +130,13 @@ pub fn config_dir() -> PathBuf {
 /// A folder of the app such as `exports` or `saves`: the first existing one of `./<name>`,
 /// `<name>` next to the executable and the crate's `<name>`, or `./<name>` if none exists
 /// yet (for an installed copy, `Documents/Recvrve/<name>`).
+#[cfg(target_arch = "wasm32")]
+pub fn app_folder(name: &str) -> PathBuf {
+    PathBuf::from("/").join(name)
+}
+
+/// A folder of the app (see the browser version above).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn app_folder(name: &str) -> PathBuf {
     if let Some(i) = installed() {
         return i.documents.join(name);
@@ -129,7 +150,7 @@ pub fn app_folder(name: &str) -> PathBuf {
     }
     dirs.push(Path::new(env!("CARGO_MANIFEST_DIR")).join(name));
     dirs.iter()
-        .find(|d| d.is_dir())
+        .find(|d| d.vfs_is_dir())
         .cloned()
         .unwrap_or_else(|| dirs[0].clone())
 }
@@ -150,16 +171,16 @@ pub fn backup_path(path: &Path) -> PathBuf {
 /// a crash never leaves a half-written config.
 pub fn write_with_backup(path: &Path, contents: &str) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        crate::platform::fs::create_dir_all(dir)?;
     }
-    if path.is_file() {
-        std::fs::copy(path, backup_path(path))?;
+    if path.vfs_is_file() {
+        crate::platform::fs::copy(path, backup_path(path))?;
     }
     let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
     tmp_name.push(".tmp");
     let tmp = path.with_file_name(tmp_name);
-    std::fs::write(&tmp, contents)?;
-    std::fs::rename(&tmp, path)
+    crate::platform::fs::write(&tmp, contents)?;
+    crate::platform::fs::rename(&tmp, path)
 }
 
 /// Loads a config at startup with fallbacks. `path` is the config file (if it exists);
@@ -179,7 +200,7 @@ pub fn load_with_fallback<T>(
     candidates.push((defaults_path(file_name), Some("the shipped defaults")));
 
     for (candidate, fallback) in candidates {
-        if !candidate.is_file() {
+        if !candidate.vfs_is_file() {
             continue;
         }
         match parse(&candidate) {
@@ -361,7 +382,7 @@ impl UiSettings {
     /// Loads `config/settings.json`; a missing or unreadable file gives the defaults.
     pub fn load() -> Self {
         let mut settings: UiSettings =
-            std::fs::read_to_string(config_dir().join(SETTINGS_FILE_NAME))
+            crate::platform::fs::read_to_string(config_dir().join(SETTINGS_FILE_NAME))
                 .ok()
                 .and_then(|text| serde_json::from_str(&text).ok())
                 .unwrap_or_default();
@@ -374,9 +395,9 @@ impl UiSettings {
 
     pub fn save(&self) -> std::io::Result<()> {
         let dir = config_dir();
-        std::fs::create_dir_all(&dir)?;
+        crate::platform::fs::create_dir_all(&dir)?;
         let text = serde_json::to_string_pretty(self).expect("settings serialize");
-        std::fs::write(dir.join(SETTINGS_FILE_NAME), text + "\n")
+        crate::platform::fs::write(dir.join(SETTINGS_FILE_NAME), text + "\n")
     }
 }
 
@@ -386,8 +407,8 @@ mod tests {
 
     fn scratch_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("draftree-test-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::platform::fs::remove_dir_all(&dir);
+        crate::platform::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
@@ -398,19 +419,19 @@ mod tests {
         write_with_backup(&path, "one").unwrap();
         assert!(!backup_path(&path).exists());
         write_with_backup(&path, "two").unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "two");
-        assert_eq!(std::fs::read_to_string(backup_path(&path)).unwrap(), "one");
-        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(crate::platform::fs::read_to_string(&path).unwrap(), "two");
+        assert_eq!(crate::platform::fs::read_to_string(backup_path(&path)).unwrap(), "one");
+        let _ = crate::platform::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn falls_back_to_the_backup() {
         let dir = scratch_dir("fallback");
         let path = dir.join("x.json");
-        std::fs::write(&path, "broken").unwrap();
-        std::fs::write(backup_path(&path), "good").unwrap();
+        crate::platform::fs::write(&path, "broken").unwrap();
+        crate::platform::fs::write(backup_path(&path), "good").unwrap();
         let parse = |p: &Path| {
-            let text = std::fs::read_to_string(p).unwrap();
+            let text = crate::platform::fs::read_to_string(p).unwrap();
             if text == "good" {
                 Ok(text)
             } else {
@@ -422,7 +443,7 @@ mod tests {
         assert_eq!(value, "good");
         assert_eq!(from, backup_path(&path));
         assert!(notice.unwrap().contains("backup"));
-        let _ = std::fs::remove_dir_all(dir);
+        let _ = crate::platform::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -505,23 +526,23 @@ mod tests {
     #[test]
     fn seeding_copies_missing_files_and_refreshes_defaults() {
         let root = std::env::temp_dir().join(format!("recvrve-seed-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::platform::fs::remove_dir_all(&root);
         let (from, to) = (root.join("shipped"), root.join("user"));
-        std::fs::create_dir_all(from.join("defaults")).unwrap();
-        std::fs::create_dir_all(from.join("themes/dark")).unwrap();
-        std::fs::write(from.join("reprgroups.json"), "shipped").unwrap();
-        std::fs::write(from.join("defaults/reprgroups.json"), "new default").unwrap();
-        std::fs::write(from.join("themes/dark/theme.json"), "dark").unwrap();
-        std::fs::create_dir_all(to.join("defaults")).unwrap();
-        std::fs::write(to.join("reprgroups.json"), "mine").unwrap();
-        std::fs::write(to.join("defaults/reprgroups.json"), "old default").unwrap();
+        crate::platform::fs::create_dir_all(from.join("defaults")).unwrap();
+        crate::platform::fs::create_dir_all(from.join("themes/dark")).unwrap();
+        crate::platform::fs::write(from.join("reprgroups.json"), "shipped").unwrap();
+        crate::platform::fs::write(from.join("defaults/reprgroups.json"), "new default").unwrap();
+        crate::platform::fs::write(from.join("themes/dark/theme.json"), "dark").unwrap();
+        crate::platform::fs::create_dir_all(to.join("defaults")).unwrap();
+        crate::platform::fs::write(to.join("reprgroups.json"), "mine").unwrap();
+        crate::platform::fs::write(to.join("defaults/reprgroups.json"), "old default").unwrap();
         seed(&from, &to).unwrap();
-        let read = |p: &str| std::fs::read_to_string(to.join(p)).unwrap();
+        let read = |p: &str| crate::platform::fs::read_to_string(to.join(p)).unwrap();
         assert_eq!(read("reprgroups.json"), "mine");
         assert_eq!(read("defaults/reprgroups.json"), "new default");
         assert_eq!(read("themes/dark/theme.json"), "dark");
         // A missing source is fine.
         seed(&root.join("nothing"), &to).unwrap();
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::platform::fs::remove_dir_all(&root);
     }
 }

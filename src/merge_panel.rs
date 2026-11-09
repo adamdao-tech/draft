@@ -22,7 +22,7 @@ pub fn MergePanel(
     let count = files.read().len() + chosen_tabs.read().len();
     let add_files = move |_| {
         spawn(async move {
-            let picked = rfd::AsyncFileDialog::new()
+            let picked = crate::platform::dialog::AsyncFileDialog::new()
                 .set_title("Add save files to merge")
                 .set_directory(crate::save::saves_dir())
                 .add_filter("Recvrve saves", &["dts", "dtt", "DTS", "DTT"])

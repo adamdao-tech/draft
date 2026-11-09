@@ -19,6 +19,7 @@
 //! The planning is pure (it only looks at catalogs) and works on any incoming list of
 //! groups, so merging two save files can use it too.
 
+use crate::platform::PathExt as _;
 use std::path::{Path, PathBuf};
 
 use crate::groups::{self, Group, GroupCatalog, USER_FIRST};
@@ -195,12 +196,12 @@ fn renumbered(group: &Group, value: u8) -> Group {
 /// picked (`stem.json`, `stem-2.json`, ...).
 pub fn write_config(dir: &Path, stem: &str, groups: &[Group]) -> std::io::Result<PathBuf> {
     let text = groups::to_config_json(groups);
-    std::fs::create_dir_all(dir)?;
-    if let Ok(entries) = std::fs::read_dir(dir) {
+    crate::platform::fs::create_dir_all(dir)?;
+    if let Ok(entries) = crate::platform::fs::read_dir(dir) {
         let mut same: Vec<PathBuf> = entries
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.extension().is_some_and(|x| x == "json"))
-            .filter(|p| std::fs::read_to_string(p).is_ok_and(|t| t == text))
+            .filter(|p| crate::platform::fs::read_to_string(p).is_ok_and(|t| t == text))
             .collect();
         same.sort();
         if let Some(existing) = same.into_iter().next() {
@@ -216,7 +217,7 @@ pub fn write_config(dir: &Path, stem: &str, groups: &[Group]) -> std::io::Result
                 dir.join(format!("{stem}-{n}.json"))
             }
         })
-        .find(|p| !p.exists())
+        .find(|p| !p.vfs_exists())
         .expect("some name is free");
     crate::configio::write_with_backup(&path, &text)?;
     Ok(path)
@@ -337,7 +338,7 @@ mod tests {
     #[test]
     fn config_files_are_written_once_and_named_safely() {
         let dir = std::env::temp_dir().join(format!("recvrve-import-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::platform::fs::remove_dir_all(&dir);
         let groups = [g(190, "A", &[16], 0)];
         let first = write_config(&dir, "my save/../x", &groups).unwrap();
         assert_eq!(first.file_name().unwrap(), "my_save_.._x.json");
@@ -348,7 +349,7 @@ mod tests {
         assert_eq!(second.file_name().unwrap(), "my_save_.._x-2.json");
         let loaded = groups::load_config(&second).unwrap();
         assert_eq!(loaded.get(190).unwrap().name, "B");
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::platform::fs::remove_dir_all(&dir);
     }
 
     /// Saves a tree made under one config and loads it under another, checking that every

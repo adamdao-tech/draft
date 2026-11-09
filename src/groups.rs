@@ -18,6 +18,7 @@
 //! `champions` holds champion node values (see `champions.rs`). Any problem with the file
 //! rejects the whole file, so either every user group loads or none does.
 
+use crate::platform::PathExt as _;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -689,7 +690,7 @@ pub fn parse_config(text: &str, source: Option<PathBuf>) -> Result<GroupCatalog,
 }
 
 pub fn load_config(path: &Path) -> Result<GroupCatalog, ConfigError> {
-    let text = std::fs::read_to_string(path)
+    let text = crate::platform::fs::read_to_string(path)
         .map_err(|e| ConfigError(format!("could not read {}: {e}", path.display())))?;
     parse_config(&text, Some(path.to_path_buf()))
 }
@@ -700,7 +701,7 @@ pub fn find_config(file_name: &str) -> Option<PathBuf> {
     crate::configio::candidate_dirs()
         .into_iter()
         .map(|dir| dir.join(file_name))
-        .find(|p| p.is_file())
+        .find(|p| p.vfs_is_file())
 }
 
 /// Finds `config/reprgroups.json` (see [`find_config`]).

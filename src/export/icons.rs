@@ -79,7 +79,7 @@ impl Icons {
         let decoded: Vec<Option<Icon>> = CHAMPIONS
             .par_iter()
             .map(|c| {
-                let png = std::fs::read(dir?.join(format!("{}.png", c.key))).ok()?;
+                let png = crate::platform::fs::read(dir?.join(format!("{}.png", c.key))).ok()?;
                 decode(png)
             })
             .collect();

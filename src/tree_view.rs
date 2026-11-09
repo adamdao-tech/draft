@@ -28,7 +28,7 @@ use crate::value_view::{RoleIcons, ValueIcon, group_tooltip, value_name};
 #[derive(Clone, Default)]
 pub struct Entering {
     pub nodes: std::rc::Rc<HashSet<NodeId>>,
-    pub at: Option<std::time::Instant>,
+    pub at: Option<crate::platform::Instant>,
 }
 
 impl PartialEq for Entering {
@@ -74,7 +74,7 @@ pub fn use_entering(
                         .filter(|id| !seen.contains_key(*id))
                         .collect::<HashSet<NodeId>>(),
                 ),
-                at: Some(std::time::Instant::now()),
+                at: Some(crate::platform::Instant::now()),
             },
             _ => Entering::default(),
         };

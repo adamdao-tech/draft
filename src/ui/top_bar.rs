@@ -158,6 +158,7 @@ pub fn TopBar() -> Element {
                                 div {
                                     class: "menu tab-menu",
                                     style: "left: min({x}px, calc(100vw - 300px)); top: {y + 4.0}px;",
+if !cfg!(target_arch = "wasm32") {
                                     button {
                                         class: "menu-item",
                                         disabled: only,
@@ -167,6 +168,7 @@ pub fn TopBar() -> Element {
                                             act.move_tab.call((id, None));
                                         },
                                         "Open in new window"
+                                    }
                                     }
                                     for (number, label) in others {
                                         button {

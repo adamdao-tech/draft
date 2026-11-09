@@ -313,6 +313,10 @@ impl Action {
     pub fn defaults(self) -> Vec<Combo> {
         use Action::*;
         let combos: Vec<String> = match self {
+            // Browsers keep Ctrl + W, Ctrl + Shift + W and Ctrl + T for themselves.
+            EmptyNode if cfg!(target_arch = "wasm32") => vec!["Alt+Shift+W".into()],
+            SetValue if cfg!(target_arch = "wasm32") => vec!["Alt+W".into()],
+            NewTab if cfg!(target_arch = "wasm32") => vec!["Alt+T".into()],
             EmptyNode => vec!["Ctrl+Shift+W".into()],
             SetValue => vec!["Ctrl+W".into()],
             Save => vec!["Ctrl+S".into()],
@@ -838,7 +842,7 @@ impl Keybinds {
     /// had problems. A missing file gives the defaults silently.
     pub fn load() -> (Keybinds, Option<String>) {
         let path = path();
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Ok(text) = crate::platform::fs::read_to_string(&path) else {
             return (Keybinds::default(), None);
         };
         match Keybinds::parse(&text) {

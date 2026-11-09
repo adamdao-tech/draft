@@ -1,17 +1,24 @@
 // No console window next to the app in Windows release builds.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::platform::PathExt as _;
+#[cfg(not(target_arch = "wasm32"))]
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
+#[cfg(not(target_arch = "wasm32"))]
 use dioxus::desktop::wry::http::Response;
+#[cfg(not(target_arch = "wasm32"))]
 use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
 use dioxus::prelude::*;
 
 // These modules expose API the GUI doesn't use yet (e.g. editing nodes in place).
 mod autosave;
+mod platform;
 mod buttons;
 #[allow(dead_code)]
 mod champions;
@@ -70,11 +77,13 @@ use value_view::{
 const STYLE: &str = include_str!("style.css");
 /// Window title; the version comes from `version` in Cargo.toml.
 const WINDOW_TITLE: &str = concat!("Recvrve ", env!("CARGO_PKG_VERSION"), " Beta");
+#[cfg(not(target_arch = "wasm32"))]
 /// The app icon (the window's; on Windows the exe's comes from build.rs).
 static ICON_PNG: &[u8] = include_bytes!("../assets/icon/recvrve-256.png");
 /// Save files given on the command line (e.g. a double-clicked .dts), opened in tabs.
 static STARTUP_FILES: OnceLock<Vec<PathBuf>> = OnceLock::new();
 
+#[cfg(not(target_arch = "wasm32"))]
 /// The window icon, decoded from the bundled PNG.
 fn window_icon() -> Option<dioxus::desktop::tao::window::Icon> {
     let img = image::load_from_memory(ICON_PNG).ok()?.into_rgba8();
@@ -82,14 +91,18 @@ fn window_icon() -> Option<dioxus::desktop::tao::window::Icon> {
     dioxus::desktop::tao::window::Icon::from_rgba(img.into_raw(), w, h).ok()
 }
 const SPLITTER_TIP: &str = "Drag to resize, double-click to reset";
+#[cfg(not(target_arch = "wasm32"))]
 const ICON_DIR_NAME: &str = "champion_icons";
+#[cfg(not(target_arch = "wasm32"))]
 const ICON_PROTOCOL: &str = "champ";
 
 static ICON_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+#[cfg(not(target_arch = "wasm32"))]
 /// Icon bytes by champion key, read once: the grid asks for the same icons over and over.
 /// Leaked on purpose, as the champion table bounds them and they live for the whole run.
 static ICON_CACHE: std::sync::LazyLock<std::sync::Mutex<HashMap<&'static str, &'static [u8]>>> =
     std::sync::LazyLock::new(Default::default);
+#[cfg(not(target_arch = "wasm32"))]
 /// Served files never change under their URL (icons, fonts, versioned pictures).
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 /// Group catalog from `config/reprgroups.json`, plus an error message if it failed to load.
@@ -109,6 +122,7 @@ struct PendingGroups {
     write_to: Option<PathBuf>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Finds the icon folder: `$RECVRVE_ICONS` (or the older `$DRAFTREE_ICONS`), then `./champion_icons`, then next to the
 /// executable, then the crate root (handy for `cargo run` from elsewhere).
 fn find_icon_dir() -> Option<PathBuf> {
@@ -128,10 +142,21 @@ fn find_icon_dir() -> Option<PathBuf> {
         candidates.push(exe_dir.join(ICON_DIR_NAME));
     }
     candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join(ICON_DIR_NAME));
-    candidates.into_iter().find(|p| p.is_dir())
+    candidates.into_iter().find(|p| p.vfs_is_dir())
 }
 
 /// URL of a file served by the icon protocol (see `serve_icon`).
+#[cfg(target_arch = "wasm32")]
+fn served_url(path: &str) -> String {
+    // Static files next to the page.
+    if path.ends_with(".ttf") {
+        path.to_string()
+    } else {
+        format!("champion_icons/{path}")
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn served_url(path: &str) -> String {
     // Wry exposes custom protocols as `http://<name>.localhost` on Windows.
     if cfg!(target_os = "windows") {
@@ -146,6 +171,7 @@ pub(crate) fn icon_url(champion: &ChampionInfo) -> String {
     served_url(&format!("{}.png", champion.key))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// The app's font (Lexend Deca, all weights), bundled so it works offline.
 static APP_FONT: &[u8] = include_bytes!("../assets/fonts/LexendDeca-Variable.ttf");
 const APP_FONT_PATH: &str = "fonts/LexendDeca.ttf";
@@ -158,6 +184,7 @@ fn font_face_css() -> String {
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// The icon of the champion with this key, from memory or read into it.
 fn icon_bytes(key: &'static str) -> Option<&'static [u8]> {
     if let Some(bytes) = ICON_CACHE.lock().ok()?.get(key) {
@@ -165,7 +192,7 @@ fn icon_bytes(key: &'static str) -> Option<&'static [u8]> {
     }
     // Read outside the lock; a missing icon isn't cached, so it can still appear.
     let dir = ICON_DIR.get()?.as_ref()?;
-    let bytes = std::fs::read(dir.join(format!("{key}.png"))).ok()?;
+    let bytes = crate::platform::fs::read(dir.join(format!("{key}.png"))).ok()?;
     let mut cache = ICON_CACHE.lock().ok()?;
     Some(
         *cache
@@ -174,6 +201,7 @@ fn icon_bytes(key: &'static str) -> Option<&'static [u8]> {
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Serves icon files. Only keys from the champion table are served, so a request can never
 /// reach outside the icon folder.
 fn serve_icon(uri_path: &str) -> Response<Cow<'static, [u8]>> {
@@ -203,11 +231,12 @@ fn serve_icon(uri_path: &str) -> Response<Cow<'static, [u8]>> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Serves theme background pictures and their blurred copies. Only picture files directly
 /// inside a theme folder, and blur cache files, are served (see `theme::resolve_request`).
 fn serve_background(uri_path: &str) -> Response<Cow<'static, [u8]>> {
     let found = theme::resolve_request(uri_path)
-        .and_then(|(path, mime)| std::fs::read(path).ok().map(|bytes| (bytes, mime)));
+        .and_then(|(path, mime)| crate::platform::fs::read(path).ok().map(|bytes| (bytes, mime)));
     match found {
         // Pictures carry a `?v=` version and cache files a content hash, so a URL's file
         // never changes.
@@ -223,15 +252,8 @@ fn serve_background(uri_path: &str) -> Response<Cow<'static, [u8]>> {
     }
 }
 
-fn main() {
-    ICON_DIR.get_or_init(find_icon_dir);
-    // Every icon into memory off the UI thread, which serves them: the grid asks for all of
-    // them at once while the window opens, and the first nodes added soon after.
-    std::thread::spawn(|| {
-        for c in CHAMPIONS.iter() {
-            icon_bytes(c.key);
-        }
-    });
+/// What both builds set up before the app starts.
+fn startup() {
     // Finds tabs left by a session that didn't close cleanly, and starts this one.
     autosave::start();
     SELECTION_GROUPS.get_or_init(selection::load_startup);
@@ -239,12 +261,38 @@ fn main() {
         let (catalog, error) = groups::load_startup();
         (Arc::new(catalog), error)
     });
+}
+
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    console_error_panic_hook::set_once();
+    wasm_bindgen_futures::spawn_local(async {
+        platform::init().await;
+        ICON_DIR.get_or_init(|| Some(platform::icon_dir()));
+        startup();
+        dioxus::LaunchBuilder::web().launch(App);
+        // For exports; the page itself shows the portraits as plain images.
+        platform::load_icons().await;
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn main() {
+    ICON_DIR.get_or_init(find_icon_dir);
+    // Every icon into memory off the UI thread, which serves them: the grid asks for all of
+    // them at once while the window opens, and the first nodes added soon after.
+    platform::spawn(|| {
+        for c in CHAMPIONS.iter() {
+            icon_bytes(c.key);
+        }
+    });
+    startup();
 
     STARTUP_FILES.get_or_init(|| {
         std::env::args_os()
             .skip(1)
             .map(PathBuf::from)
-            .filter(|p| p.is_file())
+            .filter(|p| p.vfs_is_file())
             .collect()
     });
     // Every window hides when its close button is used, and its app decides whether it
@@ -361,7 +409,7 @@ fn ring_style(rings: &[String]) -> String {
 
 /// Asks where to save a group config, defaulting to `current`. Adds `.json` if missing.
 async fn pick_json_save_path(title: &str, current: &Path) -> Option<PathBuf> {
-    let mut dialog = rfd::AsyncFileDialog::new()
+    let mut dialog = crate::platform::dialog::AsyncFileDialog::new()
         .set_title(title)
         .add_filter("Config", &["json", "JSON"]);
     if let Some(dir) = current.parent() {
@@ -393,6 +441,7 @@ static SMOOTH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::ne
 /// One zoom step of Ctrl + = / Ctrl + - (about one notch of the mouse wheel).
 const ZOOM_KEY_STEP: f64 = 1.15;
 
+#[cfg(not(target_arch = "wasm32"))]
 /// A window's setup: size, icon, the protocols serving icons and theme pictures, and hiding
 /// instead of closing (its app closes it, see `App`).
 fn window_config() -> Config {
@@ -411,6 +460,7 @@ fn window_config() -> Config {
         .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::WindowHides)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// A window opened for a tab moved out of another one (see windows.rs).
 #[component]
 fn WindowRoot(start: windows::Start) -> Element {
@@ -424,10 +474,9 @@ fn App() -> Element {
     // tab it opened with when another window sent one.
     let start = try_consume_context::<windows::Start>();
     let (window_no, inbox) = use_hook(|| {
-        let (number, inbox) = windows::register(dioxus::desktop::window().id());
+        let (number, inbox) = windows::register(platform::window_id());
         if number > 1 {
-            dioxus::desktop::window()
-                .set_title(&format!("{WINDOW_TITLE} \u{2014} Window {number}"));
+            platform::set_title(&format!("{WINDOW_TITLE} \u{2014} Window {number}"));
         }
         (
             number,
@@ -534,7 +583,7 @@ fn App() -> Element {
         notice_leaving.set(false);
         notice.set(Some((id, message)));
         spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+            crate::platform::sleep(std::time::Duration::from_secs(4)).await;
             let shown = move || {
                 notice
                     .peek()
@@ -543,7 +592,7 @@ fn App() -> Element {
             };
             if shown() && SMOOTH.load(std::sync::atomic::Ordering::Relaxed) {
                 notice_leaving.set(true);
-                tokio::time::sleep(std::time::Duration::from_millis(160)).await;
+                crate::platform::sleep(std::time::Duration::from_millis(160)).await;
             }
             if shown() {
                 notice.set(None);
@@ -610,7 +659,7 @@ fn App() -> Element {
     let mut fullscreen = use_signal(|| false);
     let mut set_fullscreen = move |on: bool| {
         fullscreen.set(on);
-        dioxus::desktop::window().set_fullscreen(on);
+        platform::set_fullscreen(on);
     };
     let mut view_menu_open = use_signal(|| false);
     // The row the graph's drawn window is centred on (see `tree_view::GraphWindow`);
@@ -1103,7 +1152,7 @@ fn App() -> Element {
             return;
         }
         spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            crate::platform::sleep(std::time::Duration::from_millis(300)).await;
             if *hover_gen.peek() == generation {
                 preview.set(Some(h));
             }
@@ -1319,7 +1368,7 @@ fn App() -> Element {
                         task.cancel();
                     }
                     let task = spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                        crate::platform::sleep(std::time::Duration::from_millis(300)).await;
                         if *tree_gen.read() == generation {
                             let h = save::content_hash(&tree.peek());
                             tree_hash.set(Some((generation, h)));
@@ -1397,7 +1446,7 @@ fn App() -> Element {
     use_future(move || async move {
         loop {
             let minutes = u64::from(ui_settings.peek().autosave_minutes.max(1));
-            tokio::time::sleep(std::time::Duration::from_secs(60 * minutes)).await;
+            crate::platform::sleep(std::time::Duration::from_secs(60 * minutes)).await;
             if ui_settings.peek().autosave_minutes > 0 {
                 autosave_round();
             }
@@ -1476,9 +1525,7 @@ fn App() -> Element {
         let here: Vec<u64> = tab_list.peek().iter().map(|t| t.id).collect();
         autosave::close_window(window_no, here);
         windows::unregister(window_no);
-        let window = dioxus::desktop::window();
-        window.set_close_behavior(dioxus::desktop::WindowCloseBehaviour::WindowCloses);
-        window.close();
+        platform::close_window();
     };
     // Moves tab `id` to window `to`, or to a new window. A window whose last tab leaves
     // closes.
@@ -1492,9 +1539,19 @@ fn App() -> Element {
         };
         match to {
             None => {
-                let start = windows::stash_start(moved);
-                let dom = VirtualDom::new_with_props(WindowRoot, WindowRootProps { start });
-                dioxus::desktop::window().new_window(dom, window_config());
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let start = windows::stash_start(moved);
+                    let dom = VirtualDom::new_with_props(WindowRoot, WindowRootProps { start });
+                    dioxus::desktop::window().new_window(dom, window_config());
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    // Pages can't open a second copy of the app with a live tab in it.
+                    adopt_tab(moved);
+                    show_notice("A tab can't move to a new window in the browser.".into());
+                    return;
+                }
             }
             Some(window) => {
                 let sent = windows::send(window, windows::Message::Adopt(Box::new(moved)));
@@ -1513,6 +1570,12 @@ fn App() -> Element {
     };
     // The window's close button while tabs have unsaved changes: how many, until confirmed.
     let mut window_close_confirm = use_signal(|| None::<usize>);
+    // The browser asks before leaving a page with unsaved changes (see web/index.html).
+    #[cfg(target_arch = "wasm32")]
+    use_effect(move || {
+        let dirty = tab_list.read().iter().any(|t| t.dirty);
+        document::eval(&format!("window.__recvrveDirty = {dirty};"));
+    });
     // A window opened for a moved tab shows it in place of its first, empty tab.
     use_hook(move || {
         if let Some(moved) = start.and_then(windows::take_start) {
@@ -1539,7 +1602,7 @@ fn App() -> Element {
                         if ui_settings.peek().autosave_minutes > 0 {
                             autosave_round();
                         }
-                        dioxus::desktop::window().set_focus();
+                        platform::focus_window();
                     }
                     windows::Message::CloseRequested => {
                         let unsaved = tab_list.peek().iter().filter(|t| t.dirty).count();
@@ -1547,7 +1610,7 @@ fn App() -> Element {
                             close_window_now();
                         } else {
                             // The window hid itself (see `window_config`): back, and ask.
-                            dioxus::desktop::window().set_visible(true);
+                            platform::show_window();
                             window_close_confirm.set(Some(unsaved));
                         }
                     }
@@ -2062,12 +2125,12 @@ fn App() -> Element {
             let old_dir = t.dir();
             t.id = theme::new_id(&t.name);
             let new_dir = t.dir();
-            if let Err(e) = std::fs::create_dir_all(&new_dir) {
+            if let Err(e) = crate::platform::fs::create_dir_all(&new_dir) {
                 error.set(Some(format!("Could not create {}: {e}", new_dir.display())));
                 return;
             }
             if let Some(file) = &t.background
-                && let Err(e) = std::fs::copy(old_dir.join(file), new_dir.join(file))
+                && let Err(e) = crate::platform::fs::copy(old_dir.join(file), new_dir.join(file))
             {
                 error.set(Some(format!("Could not copy the background picture: {e}")));
                 return;
@@ -2282,7 +2345,7 @@ fn App() -> Element {
         dialog_open.set(true);
         spawn(async move {
             let ext = format.extension();
-            let dialog = rfd::AsyncFileDialog::new()
+            let dialog = crate::platform::dialog::AsyncFileDialog::new()
                 .set_title("Save draft tree")
                 .set_directory(save::saves_dir())
                 .add_filter(format.label(), &[ext, &ext.to_uppercase()])
@@ -2293,7 +2356,7 @@ fn App() -> Element {
                 return;
             };
             let path = format.apply_extension(handle.path().to_path_buf());
-            if let Err(e) = std::fs::write(&path, contents) {
+            if let Err(e) = crate::platform::fs::write(&path, contents) {
                 error.set(Some(format!("Could not save the file: {e}")));
                 return;
             }
@@ -2307,7 +2370,7 @@ fn App() -> Element {
     let mut load_file = move |_: ()| {
         dialog_open.set(true);
         spawn(async move {
-            let dialog = rfd::AsyncFileDialog::new()
+            let dialog = crate::platform::dialog::AsyncFileDialog::new()
                 .set_title("Load draft tree")
                 .set_directory(save::saves_dir())
                 .add_filter("Recvrve saves", &["dts", "dtt", "DTS", "DTT"])
@@ -2378,7 +2441,7 @@ fn App() -> Element {
         dialog_open.set(true);
         spawn(async move {
             let name = format!("merged-{}.dtt", chrono::Local::now().format("%Y%m%d-%H%M"));
-            let picked = rfd::AsyncFileDialog::new()
+            let picked = crate::platform::dialog::AsyncFileDialog::new()
                 .set_title("Save merged draft tree")
                 .set_directory(save::saves_dir())
                 .add_filter(SaveFormat::Text.label(), &["dtt", "DTT"])
@@ -2391,7 +2454,7 @@ fn App() -> Element {
                 return;
             };
             let path = SaveFormat::Text.apply_extension(handle.path().to_path_buf());
-            if let Err(e) = std::fs::write(&path, format!("{text}\n")) {
+            if let Err(e) = crate::platform::fs::write(&path, format!("{text}\n")) {
                 error.set(Some(format!("Could not save the merged file: {e}")));
                 return;
             }
@@ -2658,7 +2721,7 @@ fn App() -> Element {
     let mut load_groups_file = move || {
         dialog_open.set(true);
         spawn(async move {
-            let dialog = rfd::AsyncFileDialog::new()
+            let dialog = crate::platform::dialog::AsyncFileDialog::new()
                 .set_title("Load representational groups config")
                 .add_filter("Group config", &["json", "JSON"])
                 .add_filter("All files", &["*"]);
@@ -3169,7 +3232,7 @@ fn App() -> Element {
             }
             counter_update.set(Some((0, 1)));
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            std::thread::spawn(move || {
+            crate::platform::spawn(move || {
                 let steps = tx.clone();
                 let result = counters::download(move |p| {
                     let _ = steps.send(p);

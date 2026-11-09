@@ -10,6 +10,7 @@
 //!   A12-RP3/...
 //! ```
 
+use crate::platform::PathExt as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -69,7 +70,7 @@ fn jobs(snap: &Snapshot, depths: &[usize]) -> Vec<(usize, usize, usize, usize)> 
 
 /// `folder`, or `folder-2`, `folder-3`, ... if it already exists.
 pub fn unique_folder(folder: &Path) -> PathBuf {
-    if !folder.exists() {
+    if !folder.vfs_exists() {
         return folder.to_path_buf();
     }
     let name = folder
@@ -79,7 +80,7 @@ pub fn unique_folder(folder: &Path) -> PathBuf {
         .to_string();
     (2..)
         .map(|n| folder.with_file_name(format!("{name}-{n}")))
-        .find(|p| !p.exists())
+        .find(|p| !p.vfs_exists())
         .expect("some suffix is free")
 }
 
@@ -98,12 +99,12 @@ pub fn run(
         snap.groups_in(nodes)
     };
     let with_legend = options.legend && (!legend_groups.is_empty() || snap.fearless.is_active());
-    progress.set_total(jobs.len() + usize::from(with_legend) + usize::from(options.zip));
+    progress.set_total(jobs.len() + usize::from(with_legend) + usize::from(options.zip || cfg!(target_arch = "wasm32")));
 
     let folder = &options.folder;
-    std::fs::create_dir_all(folder.parent().unwrap_or(Path::new(".")))
+    crate::platform::fs::create_dir_all(folder.parent().unwrap_or(Path::new(".")))
         .map_err(|e| format!("Could not create {}: {e}", folder.display()))?;
-    std::fs::create_dir(folder)
+    crate::platform::fs::create_dir(folder)
         .map_err(|e| format!("Could not create {}: {e}", folder.display()))?;
     let result = write_all(
         snap,
@@ -125,6 +126,18 @@ pub fn run(
             if let Some(zip) = &zip {
                 message.push_str(&format!(" and {}", zip.display()));
             }
+            // In the browser the folder only existed to fill the .zip, already downloaded.
+            #[cfg(target_arch = "wasm32")]
+            {
+                let _ = crate::platform::fs::remove_dir_all(folder);
+                if let Some(name) = zip.as_ref().and_then(|z| z.file_name()) {
+                    message = format!(
+                        "Downloaded {count} image{} as {}",
+                        if count == 1 { "" } else { "s" },
+                        name.to_string_lossy()
+                    );
+                }
+            }
             Ok(Outcome {
                 message,
                 path: folder.clone(),
@@ -132,8 +145,8 @@ pub fn run(
         }
         Err(e) => {
             // The folder is new and ours, so a cancelled or failed export leaves nothing.
-            let _ = std::fs::remove_dir_all(folder);
-            let _ = std::fs::remove_file(zip_path(folder));
+            let _ = crate::platform::fs::remove_dir_all(folder);
+            let _ = crate::platform::fs::remove_file(zip_path(folder));
             Err(match e {
                 WriteError::Cancelled => Cancelled.to_string(),
                 WriteError::Failed(e) => e,
@@ -150,6 +163,9 @@ enum WriteError {
 fn zip_path(folder: &Path) -> PathBuf {
     let mut name = folder.file_name().unwrap_or_default().to_os_string();
     name.push(".zip");
+    #[cfg(target_arch = "wasm32")]
+    return Path::new(crate::platform::DOWNLOADS).join(name);
+    #[cfg(not(target_arch = "wasm32"))]
     folder.with_file_name(name)
 }
 
@@ -168,7 +184,7 @@ fn write_all(
     let mut written: Vec<PathBuf> = Vec::new();
 
     for &depth in &options.depths {
-        std::fs::create_dir_all(folder.join(model::depth_code(depth)))
+        crate::platform::fs::create_dir_all(folder.join(model::depth_code(depth)))
             .map_err(|e| WriteError::Failed(format!("Could not create a folder: {e}")))?;
     }
 
@@ -220,7 +236,7 @@ fn write_all(
     }
     written.extend(paths);
 
-    if !options.zip {
+    if !(options.zip || cfg!(target_arch = "wasm32")) {
         return Ok(None);
     }
     let zip = zip_path(folder);
@@ -240,7 +256,7 @@ fn render_to(
     let pixmap = raster::render(scene, scale, icons)
         .ok_or_else(|| WriteError::Failed("Could not allocate an image.".into()))?;
     let bytes = raster::encode(pixmap, format).map_err(WriteError::Failed)?;
-    std::fs::write(path, bytes)
+    crate::platform::fs::write(path, bytes)
         .map_err(|e| WriteError::Failed(format!("Could not write {}: {e}", path.display())))
 }
 
@@ -248,7 +264,7 @@ fn render_to(
 /// are stored as they are.
 fn write_zip(zip: &Path, folder: &Path, files: &[PathBuf]) -> std::io::Result<()> {
     let base = folder.parent().unwrap_or(Path::new(""));
-    let file = std::fs::File::create(zip)?;
+    let file = crate::platform::fs::File::create(zip)?;
     let mut writer = zip::ZipWriter::new(std::io::BufWriter::new(file));
     let options =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
@@ -263,7 +279,7 @@ fn write_zip(zip: &Path, folder: &Path, files: &[PathBuf]) -> std::io::Result<()
         writer
             .start_file(name, options)
             .map_err(std::io::Error::other)?;
-        writer.write_all(&std::fs::read(&path)?)?;
+        writer.write_all(&crate::platform::fs::read(&path)?)?;
     }
     writer.finish().map_err(std::io::Error::other)?.flush()
 }
@@ -287,7 +303,7 @@ mod tests {
         }
         let snap = Snapshot::build(&t, None, &HashMap::new(), &[], false, true);
         let dir = std::env::temp_dir().join(format!("draftree-states-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::platform::fs::remove_dir_all(&dir);
         let options = ImagesOptions {
             depths: vec![1, 4],
             format: ImageFormat::WebP,
@@ -303,7 +319,7 @@ mod tests {
         assert!(outcome.path.join("A01-BB1/A01-BB1_0003.webp").is_file());
         assert!(outcome.path.join("A04-RB2/A04-RB2_0001.webp").is_file());
         assert!(dir.join("out.zip").is_file());
-        let size = std::fs::metadata(outcome.path.join("A04-RB2/A04-RB2_0001.webp"))
+        let size = crate::platform::fs::metadata(outcome.path.join("A04-RB2/A04-RB2_0001.webp"))
             .unwrap()
             .len();
         eprintln!("600px webp card: {size} bytes");
@@ -318,6 +334,6 @@ mod tests {
         };
         assert!(run(&snap, &options, icons::for_tests(), &progress).is_err());
         assert!(!dir.join("cancelled").exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::platform::fs::remove_dir_all(&dir);
     }
 }

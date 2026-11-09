@@ -269,7 +269,7 @@ pub fn ExportPanel(
         status.set(Status::Running { done: 0, total: 0 });
         spawn(async move {
             loop {
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                crate::platform::sleep(Duration::from_millis(100)).await;
                 if let Some(result) = started.take_result() {
                     status.set(match result {
                         Ok(outcome) => Status::Done(outcome.message),
@@ -323,8 +323,8 @@ pub fn ExportPanel(
                 let options = pdf_options();
                 spawn(async move {
                     let dir = export::exports_dir();
-                    let _ = std::fs::create_dir_all(&dir);
-                    let picked = rfd::AsyncFileDialog::new()
+                    let _ = crate::platform::fs::create_dir_all(&dir);
+                    let picked = crate::platform::dialog::AsyncFileDialog::new()
                         .set_title("Export")
                         .set_directory(&dir)
                         .set_file_name(format!("{name}.{ext}"))
@@ -657,6 +657,7 @@ pub fn ExportPanel(
                                 }
                                 "Group legend as a separate first image"
                             }
+if !cfg!(target_arch = "wasm32") {
                             label { class: "export-check",
                                 input {
                                     r#type: "checkbox",
@@ -665,15 +666,17 @@ pub fn ExportPanel(
                                 }
                                 "Also pack everything into a .zip"
                             }
+                            }
                         }
                         div { class: "export-section",
-                            div { class: "export-label", "New folder" }
+                            div { class: "export-label", if cfg!(target_arch = "wasm32") { "Name of the .zip" } else { "New folder" } }
                             input {
                                 class: "search export-input",
                                 r#type: "text",
                                 value: "{folder_name}",
                                 oninput: move |e| folder_name.set(e.value()),
                             }
+if !cfg!(target_arch = "wasm32") {
                             div { class: "export-row",
                                 span { class: "export-row-label muted", title: "{folder_parent().display()}", "in {folder_parent().display()}" }
                                 button {
@@ -682,7 +685,7 @@ pub fn ExportPanel(
                                     onclick: move |_| {
                                         dialog_open.set(true);
                                         spawn(async move {
-                                            let picked = rfd::AsyncFileDialog::new()
+                                            let picked = crate::platform::dialog::AsyncFileDialog::new()
                                                 .set_title("Export into folder")
                                                 .set_directory(folder_parent())
                                                 .pick_folder()
@@ -695,6 +698,7 @@ pub fn ExportPanel(
                                     },
                                     "Change…"
                                 }
+                            }
                             }
                         }
                     } else {

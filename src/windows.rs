@@ -15,12 +15,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use dioxus::desktop::tao::window::WindowId;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::clip::Clip;
 use crate::configio::UiSettings;
 use crate::keys::Keybinds;
+use crate::platform::WindowId;
 use crate::selection::SelectionGroup;
 use crate::tabs::{Parked, TabInfo};
 

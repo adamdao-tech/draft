@@ -20,6 +20,28 @@ named Recvrve (the Windows installer installs the binary as `Recvrve.exe`).
 A save file given on the command line (`draftree path/to/tree.dts`, or double-clicking a
 `.dts` / `.dtt` file once the installer associated them) opens in its own tab.
 
+## Browser version
+
+This fork (`adamdao-tech/draft`) adds a browser build of Recvrve by odparovacc, changed in
+November 2026 for that purpose (`src/platform/`, `web/`, `wrangler.jsonc`). The desktop app
+still builds as described above. `dist/` holds the finished site, so Cloudflare only has to
+serve it: `npx wrangler deploy`.
+
+To rebuild `dist/` after changing the code, install the `wasm32-unknown-unknown` Rust target
+and `wasm-bindgen-cli` at the version in `Cargo.lock`, then run `web/build.sh`.
+
+What differs from the desktop app:
+
+- Settings, themes, group configs and autosaves stay in the browser (IndexedDB). Saves and
+  exports are downloads; loading a save opens a file picker.
+- Draft state images always arrive as one `.zip`.
+- A tab can't move to a new window.
+- Counter data is the set built in at release; updating it from OP.GG isn't available.
+- Long exports keep the page busy until they finish, so progress and Cancel don't respond
+  during them.
+- Browsers keep some shortcuts, so the defaults change: set value is Alt + W, empty node is
+  Alt + Shift + W and new tab is Alt + T.
+
 ## Windows installer
 
 `installer/recvrve.iss` is an [Inno Setup](https://jrsoftware.org/isinfo.php) 6.3+ script

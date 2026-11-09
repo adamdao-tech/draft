@@ -99,7 +99,7 @@ pub const SAVES_DIR_NAME: &str = "saves";
 /// needed so file dialogs can open in it.
 pub fn saves_dir() -> PathBuf {
     let dir = crate::configio::app_folder(SAVES_DIR_NAME);
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = crate::platform::fs::create_dir_all(&dir);
     dir
 }
 
@@ -756,7 +756,7 @@ pub fn to_file_contents(tree: &DraftTree, selected: Option<NodeId>, format: Save
 /// Loads a save file, choosing the format from its extension.
 pub fn load(path: &Path) -> Result<Loaded, LoadError> {
     let format = SaveFormat::from_path(path).ok_or(LoadError::InvalidFileType)?;
-    let bytes = std::fs::read(path).map_err(|e| LoadError::Io(e.to_string()))?;
+    let bytes = crate::platform::fs::read(path).map_err(|e| LoadError::Io(e.to_string()))?;
     match format {
         SaveFormat::Compact => decode(&bytes),
         SaveFormat::Text => {

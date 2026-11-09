@@ -261,7 +261,7 @@ mod tests {
     #[test]
     fn every_champion_has_an_icon_and_every_icon_a_champion() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("champion_icons");
-        let mut icons: Vec<String> = std::fs::read_dir(dir)
+        let mut icons: Vec<String> = crate::platform::fs::read_dir(dir)
             .expect("champion_icons folder")
             .flatten()
             .filter_map(|e| {

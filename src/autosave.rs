@@ -13,7 +13,8 @@
 //! belongs to a session that ended without that (a crash, a kill, a power cut): the app
 //! offers to restore its tabs, and deletes the folder either way.
 
-use std::fs::File;
+use crate::platform::PathExt as _;
+use crate::platform::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -96,8 +97,8 @@ pub fn start() {
 
 fn start_in(root: &Path) -> std::io::Result<Session> {
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    let dir = root.join(format!("{SESSION_PREFIX}{stamp}-{}", std::process::id()));
-    std::fs::create_dir_all(&dir)?;
+    let dir = root.join(format!("{SESSION_PREFIX}{stamp}-{}", crate::platform::process_id()));
+    crate::platform::fs::create_dir_all(&dir)?;
     let lock = File::create(dir.join(LOCK_FILE))?;
     lock.try_lock().map_err(std::io::Error::other)?;
     Ok(Session { dir, _lock: lock })
@@ -111,14 +112,14 @@ pub fn crashed() -> Crashed {
 /// Session folders in `root` whose lock nobody holds, with the tabs they list.
 fn find_crashed(root: &Path) -> Crashed {
     let mut found = Crashed::default();
-    let Ok(read) = std::fs::read_dir(root) else {
+    let Ok(read) = crate::platform::fs::read_dir(root) else {
         return found;
     };
     let mut dirs: Vec<PathBuf> = read
         .flatten()
         .map(|e| e.path())
         .filter(|p| {
-            p.is_dir()
+            p.vfs_is_dir()
                 && p.file_name()
                     .is_some_and(|n| n.to_string_lossy().starts_with(SESSION_PREFIX))
         })
@@ -135,7 +136,7 @@ fn find_crashed(root: &Path) -> Crashed {
             continue;
         }
         // Every window's list, in the order the windows opened.
-        let mut lists: Vec<(u64, PathBuf)> = std::fs::read_dir(&dir)
+        let mut lists: Vec<(u64, PathBuf)> = crate::platform::fs::read_dir(&dir)
             .into_iter()
             .flatten()
             .flatten()
@@ -154,7 +155,7 @@ fn find_crashed(root: &Path) -> Crashed {
             .collect();
         lists.sort();
         for (_, list) in lists {
-            let manifest: Manifest = std::fs::read_to_string(list)
+            let manifest: Manifest = crate::platform::fs::read_to_string(list)
                 .ok()
                 .and_then(|t| serde_json::from_str(&t).ok())
                 .unwrap_or_default();
@@ -162,7 +163,7 @@ fn find_crashed(root: &Path) -> Crashed {
                 if found.tabs.iter().any(|t| t.entry.id == entry.id) {
                     continue;
                 }
-                if let Ok(bytes) = std::fs::read(dir.join(tab_file(entry.id))) {
+                if let Ok(bytes) = crate::platform::fs::read(dir.join(tab_file(entry.id))) {
                     found.tabs.push(Recovered { entry, bytes });
                 }
             }
@@ -176,7 +177,7 @@ fn find_crashed(root: &Path) -> Crashed {
 /// when the user doesn't want them).
 pub fn discard(crashed: &Crashed) {
     for dir in &crashed.dirs {
-        let _ = std::fs::remove_dir_all(dir);
+        let _ = crate::platform::fs::remove_dir_all(dir);
     }
 }
 
@@ -190,8 +191,8 @@ fn session_dir() -> Option<PathBuf> {
 /// the new one is complete.
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)
+    crate::platform::fs::write(&tmp, bytes)?;
+    crate::platform::fs::rename(&tmp, path)
 }
 
 /// One autosave round of window `window`: the tabs whose trees changed (id and encoding),
@@ -200,14 +201,14 @@ pub fn write(window: u64, changed: Vec<(u64, Vec<u8>)>, manifest: Manifest, clos
     let Some(dir) = session_dir() else {
         return;
     };
-    std::thread::spawn(move || {
+    crate::platform::spawn(move || {
         for (id, bytes) in changed {
             if let Err(e) = write_atomic(&dir.join(tab_file(id)), &bytes) {
                 eprintln!("autosave failed: {e}");
             }
         }
         for id in closed {
-            let _ = std::fs::remove_file(dir.join(tab_file(id)));
+            let _ = crate::platform::fs::remove_file(dir.join(tab_file(id)));
         }
         let json = serde_json::to_string_pretty(&manifest).expect("manifest serializes");
         if let Err(e) = write_atomic(&dir.join(window_file(window)), json.as_bytes()) {
@@ -221,10 +222,10 @@ pub fn close_window(window: u64, tabs: Vec<u64>) {
     let Some(dir) = session_dir() else {
         return;
     };
-    std::thread::spawn(move || {
-        let _ = std::fs::remove_file(dir.join(window_file(window)));
+    crate::platform::spawn(move || {
+        let _ = crate::platform::fs::remove_file(dir.join(window_file(window)));
         for id in tabs {
-            let _ = std::fs::remove_file(dir.join(tab_file(id)));
+            let _ = crate::platform::fs::remove_file(dir.join(tab_file(id)));
         }
     });
 }
@@ -240,7 +241,7 @@ pub fn finish() {
     if let Some(session) = guard.take() {
         let dir = session.dir.clone();
         drop(session);
-        let _ = std::fs::remove_dir_all(dir);
+        let _ = crate::platform::fs::remove_dir_all(dir);
     }
 }
 
@@ -251,8 +252,8 @@ mod tests {
     fn temp_root(name: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("recvrve-autosave-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::platform::fs::remove_dir_all(&dir);
+        crate::platform::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
@@ -260,7 +261,7 @@ mod tests {
     fn every_windows_tabs_are_found() {
         let root = temp_root("windows");
         let dead = root.join(format!("{SESSION_PREFIX}20260101-000000-2"));
-        std::fs::create_dir_all(&dead).unwrap();
+        crate::platform::fs::create_dir_all(&dead).unwrap();
         let entry = |id: u64| Entry {
             id,
             name: format!("Draft {id}"),
@@ -276,15 +277,15 @@ mod tests {
             ("window-2.json", vec![3, 5]),
             ("window-x.json", vec![3]),
         ] {
-            std::fs::write(dead.join(file), serde_json::to_string(&list(&ids)).unwrap()).unwrap();
+            crate::platform::fs::write(dead.join(file), serde_json::to_string(&list(&ids)).unwrap()).unwrap();
         }
         for id in [3, 5, 7] {
-            std::fs::write(dead.join(tab_file(id)), format!("tree {id}")).unwrap();
+            crate::platform::fs::write(dead.join(tab_file(id)), format!("tree {id}")).unwrap();
         }
         let found = find_crashed(&root);
         let ids: Vec<u64> = found.tabs.iter().map(|t| t.entry.id).collect();
         assert_eq!(ids, [3, 5, 7]);
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::platform::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -292,11 +293,11 @@ mod tests {
         let root = temp_root("find");
         // A running session: its lock is held.
         let running = start_in(&root).unwrap();
-        std::fs::write(running.dir.join(tab_file(1)), b"x").unwrap();
+        crate::platform::fs::write(running.dir.join(tab_file(1)), b"x").unwrap();
         // A dead one: a folder with a free lock, a list and one tab file (the other is
         // missing and skipped).
         let dead = root.join(format!("{SESSION_PREFIX}20260101-000000-1"));
-        std::fs::create_dir_all(&dead).unwrap();
+        crate::platform::fs::create_dir_all(&dead).unwrap();
         File::create(dead.join(LOCK_FILE)).unwrap();
         let manifest = Manifest {
             tabs: vec![
@@ -314,14 +315,14 @@ mod tests {
                 },
             ],
         };
-        std::fs::write(
+        crate::platform::fs::write(
             dead.join(MANIFEST_FILE),
             serde_json::to_string(&manifest).unwrap(),
         )
         .unwrap();
-        std::fs::write(dead.join(tab_file(4)), b"tree").unwrap();
+        crate::platform::fs::write(dead.join(tab_file(4)), b"tree").unwrap();
         // Something else in the folder is ignored.
-        std::fs::create_dir_all(root.join("other")).unwrap();
+        crate::platform::fs::create_dir_all(root.join("other")).unwrap();
 
         let found = find_crashed(&root);
         assert_eq!(found.dirs, std::slice::from_ref(&dead));
@@ -335,7 +336,7 @@ mod tests {
         let dir = running.dir.clone();
         drop(running);
         assert_eq!(find_crashed(&root).dirs, [dir]);
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::platform::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -344,8 +345,8 @@ mod tests {
         let path = root.join("tab-1.dts");
         write_atomic(&path, b"one").unwrap();
         write_atomic(&path, b"two").unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), b"two");
+        assert_eq!(crate::platform::fs::read(&path).unwrap(), b"two");
         assert!(!root.join("tab-1.tmp").exists());
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::platform::fs::remove_dir_all(&root);
     }
 }

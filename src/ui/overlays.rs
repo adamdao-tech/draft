@@ -178,6 +178,7 @@ pub fn Overlays() -> Element {
                                 div { class: "menu-note",
                                     {ctx.counter_data.read().snapshot.as_ref().map_or("No counter data".to_string(), |s| s.describe())}
                                 }
+if !cfg!(target_arch = "wasm32") {
                                 button {
                                     class: "menu-item",
                                     title: "Download the champions that counter each pick from OP.GG (Master+ solo queue, current patch). Takes about a minute.",
@@ -187,6 +188,7 @@ pub fn Overlays() -> Element {
                                         Some((n, total)) => format!("Updating counter data… {n}/{total}"),
                                         None => "Update counter data".to_string(),
                                     }
+                                }
                                 }
                                 div { class: "menu-separator" }
                                 div { class: "menu-heading", "Autosave" }

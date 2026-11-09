@@ -30,6 +30,7 @@
 //! The built-in Dark and Light themes live in `config/themes/dark` and `config/themes/light`
 //! like any other theme, and are written back from the defaults here if they go missing.
 
+use crate::platform::PathExt as _;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -528,7 +529,7 @@ pub fn parse(id: &str, text: &str, dir: Option<&Path>) -> Result<Theme, String> 
             ));
         } else if let Some(dir) = dir {
             let path = dir.join(&file);
-            match std::fs::metadata(&path) {
+            match crate::platform::fs::metadata(&path) {
                 Ok(meta) => {
                     theme.background_version = meta
                         .modified()
@@ -660,7 +661,7 @@ fn ensure_builtins(dir: &Path) {
     for base in [Base::Dark, Base::Light] {
         let theme = Theme::builtin(base);
         let path = dir.join(&theme.id).join(THEME_FILE_NAME);
-        if !path.exists() {
+        if !path.vfs_exists() {
             let _ = configio::write_with_backup(&path, &theme.to_json());
         }
     }
@@ -673,12 +674,12 @@ pub fn scan() -> (Vec<Theme>, Vec<String>) {
     ensure_builtins(&dir);
     let mut themes = Vec::new();
     let mut errors = Vec::new();
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
+    let mut entries: Vec<PathBuf> = crate::platform::fs::read_dir(&dir)
         .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())
         .unwrap_or_default();
     entries.sort();
     for path in entries {
-        if !path.is_dir() {
+        if !path.vfs_is_dir() {
             continue;
         }
         let Some(id) = path
@@ -692,7 +693,7 @@ pub fn scan() -> (Vec<Theme>, Vec<String>) {
             continue;
         }
         let file = path.join(THEME_FILE_NAME);
-        let Ok(text) = std::fs::read_to_string(&file) else {
+        let Ok(text) = crate::platform::fs::read_to_string(&file) else {
             continue;
         };
         match parse(&id, &text, Some(&path)) {
@@ -721,7 +722,7 @@ pub fn scan() -> (Vec<Theme>, Vec<String>) {
 
 /// Picture files directly in a theme's folder, for the settings panel.
 pub fn images_in(id: &str) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(themes_dir().join(id))
+    let mut names: Vec<String> = crate::platform::fs::read_dir(themes_dir().join(id))
         .map(|rd| {
             rd.filter_map(|e| e.ok()?.file_name().into_string().ok())
                 .filter(|n| is_plain_image_name(n))
@@ -751,12 +752,12 @@ pub fn new_id(name: &str) -> String {
     let slug = slug.trim_matches('-');
     let base = if slug.is_empty() { "theme" } else { slug };
     let dir = themes_dir();
-    if !dir.join(base).exists() {
+    if !dir.join(base).vfs_exists() {
         return base.to_string();
     }
     (2..)
         .map(|n| format!("{base}-{n}"))
-        .find(|id| !dir.join(id).exists())
+        .find(|id| !dir.join(id).vfs_exists())
         .expect("some suffix is free")
 }
 
@@ -766,6 +767,24 @@ pub const PROTOCOL: &str = "bg";
 /// Folder inside a theme folder for generated files (the blurred picture).
 pub const CACHE_DIR_NAME: &str = ".cache";
 
+#[cfg(target_arch = "wasm32")]
+fn stored_url(request: String) -> String {
+    crate::theme::resolve_request(&request)
+        .and_then(|(path, mime)| crate::platform::file_url(&path, mime))
+        .unwrap_or_default()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn background_url(id: &str, file: &str, _version: u64) -> String {
+    stored_url(format!("/{id}/{file}"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn cache_url(id: &str, file: &str) -> String {
+    stored_url(format!("/{id}/{CACHE_DIR_NAME}/{file}"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn background_url(id: &str, file: &str, version: u64) -> String {
     if cfg!(target_os = "windows") {
         format!("http://{PROTOCOL}.localhost/{id}/{file}?v={version}")
@@ -776,6 +795,7 @@ pub fn background_url(id: &str, file: &str, version: u64) -> String {
 
 /// URL of a theme's blurred picture in its cache folder. The name holds a content hash,
 /// so it needs no version.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn cache_url(id: &str, file: &str) -> String {
     if cfg!(target_os = "windows") {
         format!("http://{PROTOCOL}.localhost/{id}/{CACHE_DIR_NAME}/{file}")
@@ -852,6 +872,7 @@ fn percent_decode(text: &str) -> Option<String> {
 /// was built from by size and change time, so later starts use it at once, without reading
 /// the picture.
 mod blur_cache {
+    use crate::platform::PathExt as _;
     use std::collections::HashMap;
     use std::path::Path;
     use std::sync::{LazyLock, Mutex};
@@ -952,7 +973,7 @@ mod blur_cache {
         let waiting = ReactiveContext::current().into_iter().collect();
         states.insert(request.clone(), State::Pending(waiting));
         drop(states);
-        std::thread::spawn(move || {
+        crate::platform::spawn(move || {
             let built = {
                 let _one = BUILDING.lock();
                 let dir = themes_dir().join(&request.id);
@@ -1014,7 +1035,7 @@ mod blur_cache {
 
     /// The picture's size and change time (nanoseconds since 1970), which the index matches.
     fn stamp(path: &Path) -> Option<(u64, u128)> {
-        let meta = std::fs::metadata(path).ok()?;
+        let meta = crate::platform::fs::metadata(path).ok()?;
         let modified = meta
             .modified()
             .ok()?
@@ -1033,7 +1054,7 @@ mod blur_cache {
     pub(super) fn lookup(dir: &Path, file: &str, blur: u8, fit: Fit) -> Option<Blurred> {
         let (len, modified) = stamp(&dir.join(file))?;
         let cache = dir.join(CACHE_DIR_NAME);
-        let text = std::fs::read(cache.join(INDEX)).ok()?;
+        let text = crate::platform::fs::read(cache.join(INDEX)).ok()?;
         // One short line; anything else isn't ours.
         if text.len() > 1024 {
             return None;
@@ -1049,7 +1070,7 @@ mod blur_cache {
             && l == len.to_string()
             && m == modified.to_string()
             && source == file;
-        if !matches || !is_cache_name(name) || !cache.join(name).is_file() {
+        if !matches || !is_cache_name(name) || !cache.join(name).vfs_is_file() {
             return None;
         }
         Some(Blurred {
@@ -1081,8 +1102,8 @@ mod blur_cache {
             blurred.height
         );
         let part = cache.join(format!("{INDEX}.part"));
-        if std::fs::write(&part, line).is_ok() {
-            let _ = std::fs::rename(&part, cache.join(INDEX));
+        if crate::platform::fs::write(&part, line).is_ok() {
+            let _ = crate::platform::fs::rename(&part, cache.join(INDEX));
         }
     }
 
@@ -1096,13 +1117,13 @@ mod blur_cache {
     ) -> Result<(Blurred, Vec<String>), String> {
         // Taken before reading, so a picture changed meanwhile never matches the index.
         let stamp = stamp(&dir.join(file));
-        let bytes = std::fs::read(dir.join(file)).map_err(|e| e.to_string())?;
+        let bytes = crate::platform::fs::read(dir.join(file)).map_err(|e| e.to_string())?;
         let key = cache_key(&bytes, blur, fit);
         let cache = dir.join(CACHE_DIR_NAME);
         let existing = ["jpg", "png"]
             .map(|ext| format!("{PREFIX}{key:016x}.{ext}"))
             .into_iter()
-            .find(|name| cache.join(name).is_file());
+            .find(|name| cache.join(name).vfs_is_file());
         let (name, width, height) = match existing {
             Some(name) => {
                 let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
@@ -1117,11 +1138,11 @@ mod blur_cache {
                 let (w, h) = img.dimensions();
                 let (data, ext) = render(&img, blur, fit)?;
                 let name = format!("{PREFIX}{key:016x}.{ext}");
-                std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
+                crate::platform::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
                 // Written aside first, so a half-written file is never served.
                 let part = cache.join(format!("{name}.part"));
-                std::fs::write(&part, data).map_err(|e| e.to_string())?;
-                std::fs::rename(&part, cache.join(&name)).map_err(|e| e.to_string())?;
+                crate::platform::fs::write(&part, data).map_err(|e| e.to_string())?;
+                crate::platform::fs::rename(&part, cache.join(&name)).map_err(|e| e.to_string())?;
                 (name, w, h)
             }
         };
@@ -1141,7 +1162,7 @@ mod blur_cache {
     /// in the folder are left alone.
     pub(super) fn remove_stale(cache: &Path, keep: &str) -> Vec<String> {
         let mut removed = Vec::new();
-        let Ok(entries) = std::fs::read_dir(cache) else {
+        let Ok(entries) = crate::platform::fs::read_dir(cache) else {
             return removed;
         };
         for name in entries.filter_map(|e| e.ok()?.file_name().into_string().ok()) {
@@ -1149,7 +1170,7 @@ mod blur_cache {
                 || name
                     .strip_suffix(".part")
                     .is_some_and(|n| is_cache_name(n) && n != keep);
-            if ours && name != keep && std::fs::remove_file(cache.join(&name)).is_ok() {
+            if ours && name != keep && crate::platform::fs::remove_file(cache.join(&name)).is_ok() {
                 removed.push(name);
             }
         }
@@ -1371,8 +1392,8 @@ mod tests {
     /// A fresh empty folder under the system temp folder.
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("draftree-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::platform::fs::remove_dir_all(&dir);
+        crate::platform::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
@@ -1387,7 +1408,7 @@ mod tests {
             "blur-00000000000000dd.jpg.part",
             "notes.txt",
         ] {
-            std::fs::write(dir.join(name), b"x").unwrap();
+            crate::platform::fs::write(dir.join(name), b"x").unwrap();
         }
         let mut removed = blur_cache::remove_stale(&dir, keep);
         removed.sort();
@@ -1401,7 +1422,7 @@ mod tests {
         );
         assert!(dir.join(keep).exists());
         assert!(dir.join("notes.txt").exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::platform::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1412,7 +1433,7 @@ mod tests {
         picture.save(dir.join("bg.png")).unwrap();
         let cache = dir.join(CACHE_DIR_NAME);
         let files = || {
-            let mut names: Vec<String> = std::fs::read_dir(&cache)
+            let mut names: Vec<String> = crate::platform::fs::read_dir(&cache)
                 .unwrap()
                 .map(|e| e.unwrap().file_name().into_string().unwrap())
                 .filter(|n| blur_cache::is_cache_name(n))
@@ -1441,7 +1462,7 @@ mod tests {
         assert_ne!(changed.file, blurrier.file);
         assert_eq!(removed, [blurrier.file]);
         assert_eq!(files(), [changed.file]);
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::platform::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1472,16 +1493,16 @@ mod tests {
         );
         // A missing cache file or a damaged index isn't trusted.
         let cache = dir.join(CACHE_DIR_NAME);
-        std::fs::remove_file(cache.join(&rebuilt.file)).unwrap();
+        crate::platform::fs::remove_file(cache.join(&rebuilt.file)).unwrap();
         assert_eq!(blur_cache::lookup(&dir, "bg.png", 8, Fit::Cover), None);
         blur_cache::build(&dir, "bg.png", 8, Fit::Cover).unwrap();
         let index = cache.join("blur.idx");
-        let line = std::fs::read_to_string(&index).unwrap();
-        std::fs::write(&index, line.replace(&rebuilt.file, "../../escape.jpg")).unwrap();
+        let line = crate::platform::fs::read_to_string(&index).unwrap();
+        crate::platform::fs::write(&index, line.replace(&rebuilt.file, "../../escape.jpg")).unwrap();
         assert_eq!(blur_cache::lookup(&dir, "bg.png", 8, Fit::Cover), None);
-        std::fs::write(&index, "garbage").unwrap();
+        crate::platform::fs::write(&index, "garbage").unwrap();
         assert_eq!(blur_cache::lookup(&dir, "bg.png", 8, Fit::Cover), None);
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::platform::fs::remove_dir_all(&dir);
     }
 
     #[test]

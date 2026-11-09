@@ -12,6 +12,8 @@
 //! only, bounded sizes and times, and every name and number checked before use; anything
 //! else fails the whole update and leaves the current data as it was.
 
+#![cfg_attr(target_arch = "wasm32", allow(dead_code))]
+
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -212,7 +214,7 @@ fn valid(s: &Snapshot) -> bool {
 /// The newest of the downloaded snapshots and the built-in one.
 fn newest_snapshot() -> Option<Snapshot> {
     let mut best = bundled();
-    if let Ok(entries) = std::fs::read_dir(snapshot_dir()) {
+    if let Ok(entries) = crate::platform::fs::read_dir(snapshot_dir()) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().is_none_or(|e| e != "json")
@@ -222,7 +224,7 @@ fn newest_snapshot() -> Option<Snapshot> {
             {
                 continue;
             }
-            let Some(s) = std::fs::read_to_string(&path)
+            let Some(s) = crate::platform::fs::read_to_string(&path)
                 .ok()
                 .and_then(|text| serde_json::from_str::<Snapshot>(&text).ok())
                 .filter(valid)
@@ -243,12 +245,12 @@ fn newest_snapshot() -> Option<Snapshot> {
 /// Saves `s` as its patch's snapshot (replacing an earlier download of the same patch).
 pub fn save(s: &Snapshot) -> std::io::Result<PathBuf> {
     let dir = snapshot_dir();
-    std::fs::create_dir_all(&dir)?;
+    crate::platform::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{}.json", s.patch));
     let tmp = dir.join(format!("{}.json.tmp", s.patch));
     let text = serde_json::to_string_pretty(s).map_err(std::io::Error::other)?;
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, &path)?;
+    crate::platform::fs::write(&tmp, text)?;
+    crate::platform::fs::rename(&tmp, &path)?;
     Ok(path)
 }
 
@@ -273,11 +275,13 @@ const LANES: [(&str, Role); 5] = [
     ("support", Role::Support),
 ];
 
+#[cfg(not(target_arch = "wasm32"))]
 struct Client {
     agent: ureq::Agent,
     session: Option<String>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Client {
     fn new() -> Result<Client, String> {
         let agent: ureq::Agent = ureq::Agent::config_builder()
@@ -598,6 +602,12 @@ fn bounded_u32(v: &Value) -> Option<u32> {
 }
 
 /// Downloads a snapshot of the current patch. `progress` hears about every request.
+#[cfg(target_arch = "wasm32")]
+pub fn download(_progress: impl Fn(Progress) + 'static) -> Result<Snapshot, String> {
+    Err("Counter data can't be updated in the browser version.".to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn download(progress: impl Fn(Progress) + Send + Sync + 'static) -> Result<Snapshot, String> {
     let mut client = Client::new()?;
 
@@ -921,7 +931,7 @@ mod tests {
         })
         .unwrap();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/counters.json");
-        std::fs::write(&path, serde_json::to_string_pretty(&s).unwrap() + "\n").unwrap();
+        crate::platform::fs::write(&path, serde_json::to_string_pretty(&s).unwrap() + "\n").unwrap();
         eprintln!("{}: {} champions", s.describe(), s.champions.len());
     }
 }

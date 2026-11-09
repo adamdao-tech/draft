@@ -8,23 +8,46 @@ description = "Recvrve: League of Legends draft preparation"
 [dependencies]
 ab_glyph = "0.2.32"
 base64 = "0.23.1"
-chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
-dioxus = { version = "0.7", features = ["desktop"] }
-dirs = "6"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std", "wasmbind"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "webp", "jpeg"] }
 krilla = "0.8.2"
 rayon = "1.12.0"
-rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 slotmap = "1.1.1"
 tiny-skia = "0.12.0"
+tokio = { version = "1.53.1", features = ["sync"] }
+zip = { version = "8.6.0", default-features = false }
+
+# The desktop app.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+dioxus = { version = "0.7", features = ["desktop"] }
+dirs = "6"
+rfd = "0.17.2"
+tokio = { version = "1.53.1", features = ["time"] }
 # Counter data updates from OP.GG (see src/counters.rs): HTTPS only, checked against the
 # system's certificates.
 ureq = { version = "3.5.0", default-features = false, features = ["rustls", "platform-verifier", "gzip"] }
-tokio = { version = "1.53.1", features = ["sync", "time"] }
-zip = { version = "8.6.0", default-features = false }
+
+# The browser build (see src/platform/web.rs and web/).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+dioxus = { version = "0.7", features = ["web"] }
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+gloo-timers = { version = "0.3", features = ["futures"] }
+web-time = "1"
+console_error_panic_hook = "0.1"
 
 # The exe's icon and version details on Windows (see build.rs).
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
+
+# The browser build: small, as it is downloaded on every first visit.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "debuginfo"

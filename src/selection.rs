@@ -182,7 +182,7 @@ pub fn to_config_json(groups: &[SelectionGroup]) -> String {
 }
 
 fn load_file(path: &Path) -> Result<Vec<SelectionGroup>, ConfigError> {
-    let text = std::fs::read_to_string(path)
+    let text = crate::platform::fs::read_to_string(path)
         .map_err(|e| ConfigError(format!("could not read {}: {e}", path.display())))?;
     parse_config(&text)
 }
@@ -333,7 +333,7 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(groups::CONFIG_DIR_NAME)
             .join(CONFIG_FILE_NAME);
-        let groups = parse_config(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let groups = parse_config(&crate::platform::fs::read_to_string(path).unwrap()).unwrap();
         let names: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
         assert_eq!(names, ["Top", "Jungle", "Mid", "ADC", "Support"]);
     }

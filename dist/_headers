@@ -1,0 +1,6 @@
+/champion_icons/*
+  Cache-Control: public, max-age=604800
+/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
+/pkg/*
+  Cache-Control: public, max-age=0, must-revalidate

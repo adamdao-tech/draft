@@ -178,7 +178,11 @@ pub fn start(request: Request) -> Job {
         result: Arc::new(Mutex::new(None)),
     };
     let worker = job.clone();
-    std::thread::spawn(move || {
+    #[cfg(target_arch = "wasm32")]
+    let spawn = crate::platform::spawn_with_icons;
+    #[cfg(not(target_arch = "wasm32"))]
+    let spawn = crate::platform::spawn;
+    spawn(move || {
         // A panic in an export must not leave the UI waiting forever.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             run(request, &worker.progress)
@@ -195,23 +199,27 @@ pub fn start(request: Request) -> Job {
 /// half-written file behind.
 fn write_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)
+        crate::platform::fs::create_dir_all(dir)
             .map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
     }
     let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
     tmp_name.push(".part");
     let tmp = path.with_file_name(tmp_name);
-    std::fs::write(&tmp, bytes)
-        .and_then(|()| std::fs::rename(&tmp, path))
+    crate::platform::fs::write(&tmp, bytes)
+        .and_then(|()| crate::platform::fs::rename(&tmp, path))
         .map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
+            let _ = crate::platform::fs::remove_file(&tmp);
             format!("Could not write {}: {e}", path.display())
         })
 }
 
 fn saved(path: &Path) -> Outcome {
     Outcome {
-        message: format!("Saved {}", path.display()),
+        message: if cfg!(target_arch = "wasm32") {
+            format!("Downloaded {}", path.file_name().unwrap_or_default().to_string_lossy())
+        } else {
+            format!("Saved {}", path.display())
+        },
         path: path.to_path_buf(),
     }
 }
