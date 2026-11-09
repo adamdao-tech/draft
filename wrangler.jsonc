@@ -1,5 +1,7 @@
 {
   "name": "draft",
+  "main": "web/worker.js",
   "compatibility_date": "2026-11-01",
-  "assets": { "directory": "./dist" }
+  "workers_dev": true,
+  "assets": { "directory": "./dist", "binding": "ASSETS" }
 }
