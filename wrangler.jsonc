@@ -1,5 +1,5 @@
 {
-  "name": "draft",
+  "name": "recvrve",
   "main": "web/worker.js",
   "compatibility_date": "2026-11-01",
   "workers_dev": true,
